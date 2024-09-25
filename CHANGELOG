@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [1.0.1] - 2024-09-17
+### Changed
+- [UPGRADE-OS] Create a temporary Boot Environment
 ### Fixed
 - [UPGRADE-OS] Wrongly create new BE when already up to date
 - [UPGRADE-OS] Incorrect date format

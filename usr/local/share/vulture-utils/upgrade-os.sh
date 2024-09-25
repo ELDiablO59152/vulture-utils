@@ -14,6 +14,7 @@ keep_temp_dir=0
 download_only=0
 use_dnssec=0
 clean_cache=0
+temporary_update=0
 snapshot_system=0
 keep_previous_snap=2 # by default, only keep 2 snapshot versions: the current one, and the previous one
 upgrade_root=1
@@ -36,6 +37,7 @@ usage() {
     echo "	-c	clean tempdir at the end of the script (incompatible with -T and -D)"
     echo "	-d	use dnssec while downloading OS upgrades (disabled by default)"
     echo "	-b	Use a Boot Environment to install updates, and activate it on success"
+    echo "	-B	Use a temporary BE to test update installation and revert on reboot"
     echo "	-k <num>	Number of BEs to keep (default is 2)"
     echo "	-t <tmpdir>	temporary directory to use (default is /tmp/vulture_update/)"
     echo "	-r <strategy>	(non-interactive) resolve strategy to pass to hbsd-update script while upgrading system configuration files (see man etcupdate for more info, default is 'mf')"
@@ -54,9 +56,9 @@ download_system_update() {
         if [ ! -f "${temp_dir}/update.tar" ]; then
             # Store (-t) and keep (-T) downloads to ${temp_dir} for later use
             # Do not install update yet (-f)
-            output=$(/usr/sbin/hbsd-update -t "${temp_dir}" -T -f $options 2>&1 | tee /dev/tty)
+            /usr/sbin/hbsd-update -t "${temp_dir}" -T -f $options
         fi
-        if [ $? -ne 0 ] || echo $output | grep "This system is already on the latest version"; then return 1 ; fi
+        if [ $? -ne 0 ] ; then return 1 ; fi
     else
         error_and_exit "[!] Cannot upgrade FreeBSD systems, need HardenedBSD!"
     fi
@@ -74,11 +76,15 @@ update_system() {
             _options="${_options} -v $system_version -U"
         fi
         if [ $snapshot_system -gt 0 ]; then
-            /sbin/bectl create "${_snap_name}" || finalize 1 "Could not create a new Boot Environment!"
-            clean_old_BEs "$keep_previous_snap"
-            /sbin/bectl mount "${_snap_name}" "${_mountpoint}" || finalize 1 "Could not mount new Boot Environement!"
-            warn "[!] New BE has been created! System will need to be restarted!"
+            if [ $temporary_update -eq 1 ]; then
+                /sbin/bectl create "${_snap_name}" || finalize 1 "Could not create a new Boot Environment!"
+                /sbin/bectl mount "${_snap_name}" "${_mountpoint}" || finalize 1 "Could not mount new Boot Environement!"
             _options="${_options} -r ${_mountpoint}"
+                warn "[!] New BE has been created! System will need to be restarted!"
+            else
+                _options="${_options} -b ${_snap_name}"
+            fi
+            clean_old_BEs "$keep_previous_snap"
         fi
         # Store (-t) and keep (-T) downloads to ${temp_dir} for later use
         # Previous download should be present in the '{temp_dir}' folder already
@@ -139,12 +145,12 @@ finalize() {
         echo ""
     fi
 
-    if [ $snapshot_system -gt 0 ]; then
+    if [ $snapshot_system -gt 0 ] && [ $temporary_update -eq 1 ]; then
         if /sbin/bectl list -H -cname | grep -q "${_snap_name}"; then
             /sbin/bectl umount "${_snap_name}" || warn "[#] Could not unmount the new BE"
 
             if [ ${err_code} -eq 0 ]; then
-                /sbin/bectl activate "${_snap_name}"
+                /sbin/bectl activate -t "${_snap_name}"
             else
                 /sbin/bectl destroy -Fo "${_snap_name}"
                 echo "[!] ${_snap_name} destroyed!"
@@ -195,6 +201,11 @@ while getopts 'hDTV:cdbk:t:r:' opt; do
         b)  snapshot_system=1;
             _need_maintenance_toggle=0;
             _action_str="${_action_str} (in new Boot Environment ${_snap_name})";
+            ;;
+        B)  snapshot_system=0;
+            temporary_update=1;
+            _need_maintenance_toggle=0;
+            _action_str="${_action_str} (in temporary BE ${_snap_name})";
             ;;
         k)  keep_previous_snap=${OPTARG};
             ;;
